@@ -4,7 +4,7 @@
 
 This repository implements a Python 3.10 one-shot pipeline that synchronizes public Ho Chi Minh City traffic-camera metadata, downloads snapshots for cameras whose upstream status is `UP`, runs Ultralytics YOLO vehicle detection, and stores results in the PostgreSQL schema `traffic_tracking`.
 
-CPU and NVIDIA GPU Docker images are supported for the one-shot CLI. Scheduling, Airflow, Cloud Composer, and broader production orchestration remain out of scope until the user starts those phases.
+CPU and NVIDIA GPU Docker images are supported for the one-shot CLI. PM2 scheduling on Ubuntu is supported by running the CPU Docker image, waiting two minutes after each completed process, and then restarting it. Airflow, Cloud Composer, and broader production orchestration remain out of scope.
 
 ## Commands
 
@@ -15,6 +15,8 @@ python main.py migrate
 python main.py sync-cameras
 python main.py benchmark --sample-size 50
 python main.py run
+./run_traffic_tracking.sh
+pm2 start ecosystem.config.cjs
 pytest -q
 ```
 
@@ -32,6 +34,8 @@ pytest -q
 - A duplicate checksum reuses prior results only when the inference signature also matches. Model, threshold, image-size, class, weight, library, or preprocessing changes must force fresh inference.
 - Preserve the full original snapshot, but run inference and save annotations in the versioned preprocessed coordinate space. Store enough preprocessing metadata to interpret every bounding box.
 - Model, confidence, device, image size, batch size, and download concurrency must remain configurable through environment variables.
+- PM2 must run exactly one foreground Docker process. Keep `restart_delay=120000`; do not replace it with `cron_restart` or Docker detached mode.
+- The PM2/Docker runner must not run migrations, log `.env`, or embed database credentials. It must preserve `photo/` through a host bind mount when image saving is enabled.
 
 ## Database rules
 

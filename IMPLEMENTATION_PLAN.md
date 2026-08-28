@@ -20,11 +20,14 @@
 - [x] Add unit tests, README, `.env.example`, and `AGENTS.md`.
 - [x] Verify migrations, live metadata sync, live snapshot download, and YOLO smoke inference.
 
-## Deferred deployment phase
+## Deployment phase
 
 - [ ] Run the 50-camera benchmark on the target GPU server and choose image/batch settings from measured results plus human review.
 - [ ] Validate a labeled image set and decide whether COCO weights need fine-tuning for Ho Chi Minh City camera viewpoints.
-- [ ] Add scheduling at the agreed interval (currently intended as 30 minutes).
+- [x] Add Ubuntu PM2 scheduling with one CPU Docker instance and a two-minute delay after each cycle.
 - [x] Add Docker build targets for CPU and NVIDIA GPU runtimes.
+
+## Deferred production work
+
 - [ ] Add Airflow/Cloud Composer orchestration only after the one-shot job is accepted.
 - [ ] Define production monitoring, alerting, retention/partitioning, and backup policies.

@@ -116,7 +116,8 @@ Sau khi thiết lập xong, mỗi lần thu thập dữ liệu thủ công thư�
 python main.py run
 ```
 
-Scheduling và Airflow được để lại cho phase triển khai sau.
+Production có thể dùng PM2 để chạy lại lệnh `run` sau mỗi chu kỳ. Airflow và
+Cloud Composer vẫn được để lại cho phase triển khai sau.
 
 ## Docker
 
@@ -179,6 +180,141 @@ không trỏ về host. Đặt `DB_SERVER=host.docker.internal` và chạy thêm
 docker run --rm --env-file .env \
   --add-host=host.docker.internal:host-gateway \
   traffic-tracking:cpu run
+```
+
+## Chạy định kỳ bằng PM2 trên Ubuntu
+
+Project dùng PM2 như một process supervisor, không dùng `cron_restart`. Mỗi lần
+`run_traffic_tracking.sh` kết thúc, PM2 đợi 120 giây rồi mới chạy chu kỳ tiếp
+theo. Vì vậy khoảng cách giữa hai lần bắt đầu bằng thời gian xử lý của chu kỳ
+trước cộng thêm 2 phút. PM2 chỉ chạy một instance; PostgreSQL advisory lock vẫn
+ngăn một lệnh thủ công khác xử lý đồng thời.
+
+### 1. Chuẩn bị Ubuntu
+
+Cài Docker Engine trước, sau đó bảo đảm deploy user có thể gọi Docker mà không
+cần `sudo`:
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+Đăng xuất rồi đăng nhập lại để group mới có hiệu lực. Quyền thành viên group
+`docker` tương đương quyền quản trị máy, vì vậy chỉ cấp cho deploy user tin cậy.
+
+Cài Node.js, npm và PM2. Nên dùng một bản Node.js LTS còn được hỗ trợ:
+
+```bash
+sudo apt update
+sudo apt install -y nodejs npm
+sudo npm install -g pm2
+
+node --version
+pm2 --version
+docker version
+```
+
+### 2. Chuẩn bị database và Docker image
+
+Tại thư mục project, tạo `.env`, áp dụng DDL từ host và build image CPU:
+
+```bash
+cp .env.example .env
+# Điền credentials và cấu hình production vào .env
+
+python main.py migrate
+docker build --target cpu -t traffic-tracking:cpu .
+```
+
+Nếu PostgreSQL chạy trên chính Ubuntu host, đặt giá trị sau trong `.env`:
+
+```env
+DB_SERVER=host.docker.internal
+```
+
+Kiểm tra một chu kỳ thủ công trước khi giao cho PM2:
+
+```bash
+./run_traffic_tracking.sh
+```
+
+Runner dùng image `traffic-tracking:cpu`, đọc `.env` bằng đường dẫn tuyệt đối,
+mount `photo/` vào container và chạy Docker ở foreground. Có thể override image
+hoặc env file khi kiểm thử:
+
+```bash
+TRAFFIC_TRACKING_IMAGE=traffic-tracking:cpu-yolo26s \
+TRAFFIC_TRACKING_ENV_FILE=/path/to/runtime.env \
+./run_traffic_tracking.sh
+```
+
+### 3. Khởi động lịch PM2
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 status
+pm2 describe traffic-tracking
+pm2 logs traffic-tracking --lines 200
+```
+
+`ecosystem.config.cjs` cấu hình một instance, delay 120.000 ms, và cho process
+tối đa 90 giây để dừng. Nếu runner lỗi trong vòng 30 giây liên tục 10 lần, PM2
+chuyển app sang trạng thái lỗi để tránh retry vô hạn với cấu hình hoặc image bị
+sai. Sau khi sửa nguyên nhân, chạy `pm2 restart traffic-tracking`.
+
+### 4. Tự khởi động sau khi Ubuntu reboot
+
+Chạy bằng chính deploy user đang quản lý application, không chạy PM2 bằng root:
+
+```bash
+pm2 startup systemd
+```
+
+PM2 sẽ in ra một câu lệnh `sudo ...`; copy và chạy chính xác câu lệnh đó, sau
+đó lưu danh sách process hiện tại:
+
+```bash
+pm2 save
+```
+
+Kiểm tra systemd unit mà PM2 vừa tạo:
+
+```bash
+systemctl status "pm2-$USER"
+```
+
+### 5. Vận hành và cập nhật
+
+```bash
+# Xem log và trạng thái
+pm2 logs traffic-tracking --lines 200
+pm2 status
+
+# Tạm dừng hoặc chạy lại
+pm2 stop traffic-tracking
+pm2 restart traffic-tracking
+
+# Xóa hẳn khỏi PM2
+pm2 delete traffic-tracking
+pm2 save
+```
+
+Sau khi cập nhật source hoặc Dockerfile, build lại image rồi nạp lại cấu hình:
+
+```bash
+docker build --target cpu -t traffic-tracking:cpu .
+pm2 startOrRestart ecosystem.config.cjs
+pm2 save
+```
+
+PM2 ghi log dưới `~/.pm2/logs`. Nên bật rotation để log không tăng vô hạn:
+
+```bash
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 100M
+pm2 set pm2-logrotate:retain 14
+pm2 set pm2-logrotate:compress true
+pm2 save
 ```
 
 ## Lưu ảnh khi development
