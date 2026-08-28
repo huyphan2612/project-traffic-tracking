@@ -1,0 +1,13 @@
+geoalchemy2==0.18.0
+httpx==0.28.1
+pillow==11.3.0
+psutil==7.0.0
+psycopg[binary]==3.2.9
+python-dotenv==1.1.1
+sqlalchemy==2.0.43
+ultralytics==8.4.131
+
+# Test dependencies
+pytest==8.4.1
+pytest-asyncio==1.1.0
+respx==0.22.0
