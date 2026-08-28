@@ -335,6 +335,83 @@ vậy cần theo dõi dung lượng ổ đĩa trong môi trường development.
 Mặc định `SAVE_IMAGES=false`; dữ liệu ảnh chỉ tồn tại trong bộ nhớ trong thời
 gian xử lý và không được lưu vĩnh viễn.
 
+## Các loại trạng thái
+
+Project có ba cột `status` thuộc ba nhóm dữ liệu khác nhau. Không nên so sánh
+hoặc diễn giải các nhóm này như cùng một enum.
+
+### Trạng thái observation
+
+`traffic_tracking.observations.status` cho biết kết quả xử lý một camera trong
+một chu kỳ:
+
+- `succeeded`: tải ảnh và chạy YOLO thành công. Các cột số lượng phương tiện có
+  giá trị, kể cả khi tất cả đều bằng `0`.
+- `duplicate`: checksum ảnh và inference signature giống observation gần nhất;
+  pipeline không chạy YOLO lại mà sao chép counts và detections, đồng thời ghi
+  observation nguồn vào `duplicate_of_id`.
+- `skipped_not_up`: camera có trạng thái upstream khác `UP`, nên không tải ảnh
+  và không chạy YOLO.
+- `fetch_error`: không tải hoặc không xác thực được ảnh camera hợp lệ.
+- `inference_error`: tải ảnh thành công nhưng YOLO xử lý ảnh thất bại.
+
+Các observation `skipped_not_up`, `fetch_error` và `inference_error` có các cột
+count bằng `NULL`, không phải bằng `0`.
+
+### Photo path và thông tin lỗi của observation
+
+Hai cột `original_photo_path` và `annotated_photo_path` chỉ có giá trị khi
+`SAVE_IMAGES=true` và pipeline lưu ảnh thành công:
+
+| Observation status | Photo path | Error |
+| --- | --- | --- |
+| `succeeded` | Có cả đường dẫn ảnh gốc và ảnh annotated khi bật lưu ảnh; nếu `SAVE_IMAGES=false` thì cả hai là `NULL`. | Thông thường `error_code` và `error_message` là `NULL`. |
+| `duplicate` | Có đường dẫn của hai ảnh được lưu cho observation hiện tại khi bật lưu ảnh; không tái sử dụng path của observation cũ. | Thông thường `error_code` và `error_message` là `NULL`. |
+| `skipped_not_up` | Cả hai là `NULL` vì pipeline không tải ảnh. | `error_code='camera_not_up'`; message chứa trạng thái upstream. |
+| `fetch_error` | Cả hai là `NULL` vì không có ảnh hợp lệ để lưu. | `error_code` thường là `http_error` hoặc `invalid_snapshot`; message chứa lỗi HTTP, content type hoặc lỗi giải mã ảnh. |
+| `inference_error` | Cả hai là `NULL` theo implementation hiện tại, kể cả khi đã tải được ảnh gốc. | `error_code='inference_error'`; message chứa lỗi từ YOLO. |
+
+Với `PHOTO_DIR=photo` mặc định, photo path được lưu dưới dạng đường dẫn tương
+đối như
+`photo/<run-id>/<camera-id>_<timestamp>_original.jpg` và
+`photo/<run-id>/<camera-id>_<timestamp>_annotated.jpg`. Trong Docker/PM2,
+thư mục `photo/` được bind mount ra host để file không mất khi container
+`--rm` kết thúc.
+
+`error_code` dùng để lọc theo loại lỗi; `error_message` phục vụ chẩn đoán và có
+thể thay đổi theo HTTP client, Pillow hoặc YOLO. Không dùng `error_message` như
+một enum ổn định. Bảng `traffic_tracking.runs` chỉ có `error_message`, thường
+có giá trị khi run ở trạng thái `failed`. Lỗi riêng từng camera được ghi tại
+observation; run sẽ là `partial`, hoặc `failed` nếu không camera `UP` nào tạo
+được kết quả thành công/duplicate.
+
+### Trạng thái run
+
+`traffic_tracking.runs.status` cho biết kết quả của toàn bộ một lần chạy:
+
+- `running`: run đã được tạo và vẫn đang xử lý.
+- `completed`: command kết thúc thành công theo quy tắc của loại run. Với
+  `run`, trạng thái này có nghĩa không có camera nào bị lỗi.
+- `partial`: một `run` hoàn tất nhưng có ít nhất một camera bị lỗi; kết quả của
+  các camera còn lại vẫn được lưu.
+- `failed`: lỗi hệ thống làm command không thể hoàn tất, hoặc một `run` có
+  camera `UP` nhưng không camera nào tạo được observation `succeeded` hay
+  `duplicate`.
+
+### Trạng thái camera
+
+`traffic_tracking.cameras.status` được đồng bộ trực tiếp từ `CamStatus` của
+website giao thông TP.HCM và không phải enum do project kiểm soát. Các giá trị
+đang quan sát được gồm:
+
+- `UP`: camera sẵn sàng; pipeline tải ảnh và chạy YOLO.
+- `NOT_IMAGE`: upstream không cung cấp feed ảnh hợp lệ; pipeline ghi
+  `skipped_not_up` và bỏ qua inference.
+
+Website có thể bổ sung giá trị mới. Pipeline chỉ xử lý inference khi trạng thái
+chính xác là `UP`; mọi giá trị khác, kể cả `NULL`, đều được xem là không sẵn
+sàng.
+
 ## Cách tính số phương tiện
 
 Mỗi observation là số phương tiện xuất hiện trong một ảnh tại thời điểm chụp,
